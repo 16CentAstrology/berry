@@ -289,7 +289,7 @@ describe(`Commands`, () => {
     test(
       `it should ignore the folders covered by the local npmignore file`,
       makeTemporaryEnv({}, async ({path, run, source}) => {
-        await fsUtils.mkdirp(`${path}/__tests__/`);
+        await xfs.mkdirPromise(`${path}/__tests__`);
         await fsUtils.writeFile(`${path}/__tests__/index.js`, `module.exports = 42;\n`);
         await fsUtils.writeFile(`${path}/.npmignore`, `__tests__\n`);
 
@@ -324,12 +324,14 @@ describe(`Commands`, () => {
         module: `./index.mjs`,
         browser: `./index.umd.js`,
         exports: `./index.modern.js`,
+        imports: {[`#dep`]: `local`},
         publishConfig: {
           type: `module`,
           main: `./published.js`,
           module: `./published.mjs`,
           browser: `./published.umd.js`,
           exports: `./published.modern.js`,
+          imports: {[`#dep`]: `published`},
         },
       }, async ({path, run, source}) => {
         await run(`install`);
@@ -337,21 +339,23 @@ describe(`Commands`, () => {
 
         await fsUtils.unpackToDirectory(path, `${path}/package.tgz`);
 
-        const packedManifest = await fsUtils.readJson(`${path}/package/package.json`);
+        const packedManifest = await xfs.readJsonPromise(`${path}/package/package.json`);
 
         expect(packedManifest.type).toBe(`module`);
         expect(packedManifest.main).toBe(`./published.js`);
         expect(packedManifest.module).toBe(`./published.mjs`);
         expect(packedManifest.browser).toBe(`./published.umd.js`);
         expect(packedManifest.exports).toBe(`./published.modern.js`);
+        expect(packedManifest.imports).toEqual({[`#dep`]: `published`});
 
-        const originalManifest = await fsUtils.readJson(`${path}/package.json`);
+        const originalManifest = await xfs.readJsonPromise(`${path}/package.json`);
 
         expect(originalManifest.type).toBe(`commonjs`);
         expect(originalManifest.main).toBe(`./index.js`);
         expect(originalManifest.module).toBe(`./index.mjs`);
         expect(originalManifest.browser).toBe(`./index.umd.js`);
         expect(originalManifest.exports).toBe(`./index.modern.js`);
+        expect(originalManifest.imports).toEqual({[`#dep`]: `local`});
       }),
     );
 
@@ -414,7 +418,7 @@ describe(`Commands`, () => {
 
         await fsUtils.unpackToDirectory(path, `${path}/dependant/package.tgz`);
 
-        const packedManifest = await fsUtils.readJson(`${path}/package/package.json`);
+        const packedManifest = await xfs.readJsonPromise(`${path}/package/package.json`);
 
         expect(packedManifest.dependencies[dependency]).toBe(`1.0.0`);
         expect(packedManifest.devDependencies[dependency]).toBe(`^1.0.0`);
@@ -425,7 +429,7 @@ describe(`Commands`, () => {
         expect(packedManifest.peerDependencies[bar]).toBe(`~3.0.0`);
         expect(packedManifest.optionalDependencies[optional]).toBe(`4.0.0`);
 
-        const originalManifest = await fsUtils.readJson(`${path}/dependant/package.json`);
+        const originalManifest = await xfs.readJsonPromise(`${path}/dependant/package.json`);
 
         expect(originalManifest.dependencies[dependency]).toBe(`workspace:*`);
         expect(originalManifest.devDependencies[dependency]).toBe(`workspace:^1.0.0`);
@@ -722,12 +726,12 @@ describe(`Commands`, () => {
 
         await fsUtils.unpackToDirectory(path, `${path}/dependant/package.tgz`);
 
-        const packedManifest = await fsUtils.readJson(`${path}/package/package.json`);
+        const packedManifest = await xfs.readJsonPromise(`${path}/package/package.json`);
 
         expect(packedManifest.dependencies[dependency]).toBe(`^1.0.0`);
         expect(packedManifest.devDependencies[dependency]).toBe(`1.0.0`);
 
-        const originalManifest = await fsUtils.readJson(`${path}/dependant/package.json`);
+        const originalManifest = await xfs.readJsonPromise(`${path}/dependant/package.json`);
 
         expect(originalManifest.dependencies).toBe(undefined);
         expect(originalManifest.devDependencies[dependency]).toBe(`workspace:*`);

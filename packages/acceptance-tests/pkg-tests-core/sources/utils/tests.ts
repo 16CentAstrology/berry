@@ -1,30 +1,34 @@
-import {PortablePath, npath, toFilename} from '@yarnpkg/fslib';
-import assert                            from 'assert';
-import crypto                            from 'crypto';
-import finalhandler                      from 'finalhandler';
-import https                             from 'https';
-import {IncomingMessage, ServerResponse} from 'http';
-import http                              from 'http';
-import invariant                         from 'invariant';
-import {AddressInfo}                     from 'net';
-import os                                from 'os';
-import pem                               from 'pem';
-import semver                            from 'semver';
-import serveStatic                       from 'serve-static';
-import {promisify}                       from 'util';
-import {v5 as uuidv5}                    from 'uuid';
-import {Gzip}                            from 'zlib';
+import {PortablePath, npath, toFilename, xfs, ppath, Filename} from '@yarnpkg/fslib';
+import assert                                                  from 'assert';
+import crypto                                                  from 'crypto';
+import finalhandler                                            from 'finalhandler';
+import https                                                   from 'https';
+import {IncomingMessage, ServerResponse}                       from 'http';
+import http                                                    from 'http';
+import invariant                                               from 'invariant';
+import {AddressInfo}                                           from 'net';
+import os                                                      from 'os';
+import pem                                                     from 'pem';
+import semver                                                  from 'semver';
+import serveStatic                                             from 'serve-static';
+import stream                                                  from 'stream';
+import {promisify}                                             from 'util';
+import {v5 as uuidv5}                                          from 'uuid';
+import {Gzip}                                                  from 'zlib';
 
-import {ExecResult}                      from './exec';
-import * as fsUtils                      from './fs';
+import {ExecResult}                                            from './exec';
+import * as fsUtils                                            from './fs';
 
 const deepResolve = require(`super-resolve`);
 const staticServer = serveStatic(npath.fromPortablePath(require(`pkg-tests-fixtures`)));
 
+// TODO: Use stream.promises.pipeline when dropping support for Node.js < 15.0.0
+const pipelinePromise = promisify(stream.pipeline);
+
 // Testing things inside a big-endian container takes forever
 export const TEST_TIMEOUT = os.endianness() === `BE`
   ? 150000
-  : 45000;
+  : 50000;
 
 export type PackageEntry = Map<string, {path: string, packageJson: Record<string, any>}>;
 export type PackageRegistry = Map<string, PackageEntry>;
@@ -79,6 +83,7 @@ export class Login {
   password: string;
 
   npmOtpToken: string | null;
+  npmOtpNotice: string | null;
   npmAuthToken: string | null;
 
   npmAuthIdent: {
@@ -86,12 +91,13 @@ export class Login {
     encoded: string;
   };
 
-  constructor(username: string, {otp}: {otp?: boolean} = {}) {
+  constructor(username: string, {otp, notice}: {otp?: boolean, notice?: boolean} = {}) {
     this.username = username;
     this.password = crypto.createHash(`sha1`).update(username).digest(`hex`);
 
     this.npmOtpToken = otp ? Buffer.from(this.password, `hex`).slice(0, 4).join(``) : null;
     this.npmAuthToken = uuidv5(this.password, `06030d6c-8c43-412a-ad0a-787f1fb9e31e`);
+    this.npmOtpNotice = otp && notice ? `You're looking handsome today` : null;
 
     const authIdent = `${this.username}:${this.password}`;
 
@@ -106,6 +112,7 @@ export const validLogins = {
   fooUser: new Login(`foo-user`),
   barUser: new Login(`bar-user`),
   otpUser: new Login(`otp-user`, {otp: true}),
+  otpUserWithNotice: new Login(`otp-user-with-notice`, {otp: true, notice: true}),
 } as const;
 
 let whitelist = new Map();
@@ -145,10 +152,11 @@ export const getPackageRegistry = (): Promise<PackageRegistry> => {
 
   return (packageRegistryPromise = (async () => {
     const packageRegistry = new Map();
-    for (const packageFile of await fsUtils.walk(npath.toPortablePath(`${require(`pkg-tests-fixtures`)}/packages`), {
-      filter: [`package.json`],
-    })) {
-      const packageJson = await fsUtils.readJson(packageFile);
+    const packagesDir = npath.toPortablePath(`${require(`pkg-tests-fixtures`)}/packages`);
+
+    for (const packageName of (await xfs.readdirPromise(packagesDir))) {
+      const packageFile = ppath.join(packagesDir, packageName, Filename.manifest);
+      const packageJson = await xfs.readJsonPromise(packageFile);
 
       const {name, version} = packageJson;
       if (name.startsWith(`git-`))
@@ -159,7 +167,7 @@ export const getPackageRegistry = (): Promise<PackageRegistry> => {
         packageRegistry.set(name, (packageEntry = new Map()));
 
       packageEntry.set(version, {
-        path: require(`path`).posix.dirname(packageFile),
+        path: ppath.dirname(packageFile),
         packageJson,
       });
     }
@@ -188,7 +196,7 @@ export const getPackageArchiveStream = async (name: string, version: string): Pr
   });
 };
 
-export const getPackageArchivePath = async (name: string, version: string): Promise<string> => {
+export const getPackageArchivePath = async (name: string, version: string): Promise<PortablePath> => {
   const packageEntry = await getPackageEntry(name);
   if (!packageEntry)
     throw new Error(`Unknown package "${name}"`);
@@ -197,7 +205,8 @@ export const getPackageArchivePath = async (name: string, version: string): Prom
   if (!packageVersionEntry)
     throw new Error(`Unknown version "${version}" for package "${name}"`);
 
-  const archivePath = await fsUtils.createTemporaryFile(toFilename(`${name}-${version}.tar.gz`));
+  const tmpDir = await xfs.mktempPromise();
+  const archivePath = `${tmpDir}/${toFilename(`${name}-${version}.tar.gz`)}` as PortablePath;
 
   await fsUtils.packToFile(archivePath, npath.toPortablePath(packageVersionEntry.path), {
     virtualPath: npath.toPortablePath(`/package`),
@@ -211,20 +220,11 @@ export const getPackageArchiveHash = async (
   version: string,
 ): Promise<string | Buffer> => {
   const stream = await getPackageArchiveStream(name, version);
+  const hash = crypto.createHash(`sha1`);
 
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash(`sha1`);
-    hash.setEncoding(`hex`);
+  await pipelinePromise(stream, hash);
 
-    // Send the archive to the hash function
-    stream.pipe(hash);
-
-    stream.on(`end`, () => {
-      const finalHash = hash.read();
-      invariant(finalHash, `The hash should have been computated`);
-      resolve(finalHash);
-    });
-  });
+  return hash.digest(`hex`);
 };
 
 export const getPackageHttpArchivePath = async (
@@ -280,6 +280,9 @@ export const startPackageServer = ({type}: { type: keyof typeof packageServerUrl
     res.writeHead(401, {
       [`Content-Type`]: `application/json`,
       [`www-authenticate`]: `OTP`,
+      ...user.npmOtpNotice && {
+        [`npm-notice`]: user.npmOtpNotice,
+      },
     });
 
     res.end();
@@ -378,8 +381,10 @@ export const startPackageServer = ({type}: { type: keyof typeof packageServerUrl
         [`Transfer-Encoding`]: `chunked`,
       });
 
-      const packStream = fsUtils.packToStream(npath.toPortablePath(packageVersionEntry.path), {virtualPath: npath.toPortablePath(`/package`)});
-      packStream.pipe(response);
+      await pipelinePromise(
+        fsUtils.packToStream(npath.toPortablePath(packageVersionEntry.path), {virtualPath: npath.toPortablePath(`/package`)}),
+        response,
+      );
     },
 
     async [RequestType.Whoami](parsedRequest, request, response) {
@@ -452,6 +457,9 @@ export const startPackageServer = ({type}: { type: keyof typeof packageServerUrl
         } catch (e) {
           return processError(response, 401, `Invalid`);
         }
+
+        if (typeof body.readme !== `string` && name === `readme-required`)
+          return processError(response, 400, `Missing readme`);
 
         const [version] = Object.keys(body.versions);
         if (!body.versions[version].gitHead && name === `githead-required`)
@@ -666,25 +674,38 @@ export const generatePkgDriver = ({
       }
 
       return Object.assign(async (): Promise<void> => {
-        const path = await fsUtils.realpath(await fsUtils.createTemporaryFolder());
+        const homePath = await xfs.mktempPromise();
+
+        const path = ppath.join(homePath, `test`);
+        await xfs.mkdirPromise(path);
 
         const registryUrl = await startPackageServer();
 
-        // Writes a new package.json file into our temporary directory
-        await fsUtils.writeJson(npath.toPortablePath(`${path}/package.json`), await deepResolve(packageJson));
+        function cleanup(content: string) {
+          return content.replace(/(https?):\/\/localhost:\d+/g, `$1://registry.example.org`);
+        }
 
-        const run = (...args: Array<any>) => {
+        // Writes a new package.json file into our temporary directory
+        await xfs.writeJsonPromise(npath.toPortablePath(`${path}/package.json`), await deepResolve(packageJson));
+
+        const run = async (...args: Array<any>) => {
           let callDefinition = {};
 
           if (args.length > 0 && typeof args[args.length - 1] === `object`)
             callDefinition = args.pop();
 
-          return runDriver(path, args, {
+          const {stdout, stderr, ...rest} = await runDriver(path, args, {
             registryUrl,
             ...definition,
             ...subDefinition,
             ...callDefinition,
           });
+
+          return {
+            stdout: cleanup(stdout),
+            stderr: cleanup(stderr),
+            ...rest,
+          };
         };
 
         const source = async (script: string, callDefinition: Record<string, any> = {}): Promise<Record<string, any>> => {

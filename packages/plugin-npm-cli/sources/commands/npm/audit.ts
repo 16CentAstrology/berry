@@ -9,7 +9,7 @@ import * as npmAuditTypes                                                       
 import * as npmAuditUtils                                                          from '../../npmAuditUtils';
 
 // eslint-disable-next-line arca/no-default-export
-export default class AuditCommand extends BaseCommand {
+export default class NpmAuditCommand extends BaseCommand {
   static paths = [
     [`npm`, `audit`],
   ];
@@ -169,7 +169,9 @@ export default class AuditCommand extends BaseCommand {
       for (const advisory of Object.keys(result.advisories)) {
         if (micromatch.isMatch(advisory, ignoredAdvisories)) {
           const entry = result.advisories[advisory];
-          result.metadata.vulnerabilities[entry.severity] -= 1;
+          let affectedPathsCount = 0;
+          entry.findings.forEach(finding => affectedPathsCount += finding.paths.length);
+          result.metadata.vulnerabilities[entry.severity] -= affectedPathsCount;
           delete result.advisories[advisory];
         }
       }

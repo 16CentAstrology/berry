@@ -1,7 +1,7 @@
-import {Descriptor, FetchResult, formatUtils, Installer, InstallPackageExtraApi, Linker, LinkOptions, LinkType, Locator, LocatorHash, Manifest, MessageName, MinimalLinkOptions, Package, Project, miscUtils, structUtils} from '@yarnpkg/core';
-import {Dirent, Filename, PortablePath, setupCopyIndex, ppath, xfs}                                                                                                                                                        from '@yarnpkg/fslib';
-import {jsInstallUtils}                                                                                                                                                                                                    from '@yarnpkg/plugin-pnp';
-import {UsageError}                                                                                                                                                                                                        from 'clipanion';
+import {Descriptor, FetchResult, formatUtils, Installer, InstallPackageExtraApi, Linker, LinkOptions, LinkType, Locator, LocatorHash, Manifest, MessageName, MinimalLinkOptions, Package, Project, miscUtils, structUtils, WindowsLinkType} from '@yarnpkg/core';
+import {Dirent, Filename, PortablePath, setupCopyIndex, ppath, xfs}                                                                                                                                                                         from '@yarnpkg/fslib';
+import {jsInstallUtils}                                                                                                                                                                                                                     from '@yarnpkg/plugin-pnp';
+import {UsageError}                                                                                                                                                                                                                         from 'clipanion';
 
 export type PnpmCustomData = {
   locatorByPath: Map<PortablePath, string>;
@@ -86,7 +86,7 @@ class PnpmInstaller implements Installer {
 
   constructor(private opts: LinkOptions) {
     this.indexFolderPromise = setupCopyIndex(xfs, {
-      indexPath: ppath.join(opts.project.configuration.get(`globalFolder`), `index` as Filename),
+      indexPath: ppath.join(opts.project.configuration.get(`globalFolder`), `index`),
     });
   }
 
@@ -203,7 +203,7 @@ class PnpmInstaller implements Installer {
         // Downgrade virtual workspaces (cf isPnpmVirtualCompatible's documentation)
         let targetDependency = dependency;
         if (!isPnpmVirtualCompatible(dependency, {project: this.opts.project})) {
-          this.opts.report.reportWarning(MessageName.UNNAMED, `The pnpm linker doesn't support providing different versions to workspaces' peer dependencies`);
+          this.opts.report.reportWarningOnce(MessageName.UNNAMED, `The pnpm linker doesn't support providing different versions to workspaces' peer dependencies`);
           targetDependency = structUtils.devirtualizeLocator(dependency);
         }
 
@@ -231,7 +231,8 @@ class PnpmInstaller implements Installer {
 
           await xfs.mkdirpPromise(ppath.dirname(depDstPath));
 
-          if (process.platform == `win32`) {
+
+          if (process.platform == `win32` && this.opts.project.configuration.get(`winLinkType`) === WindowsLinkType.JUNCTIONS) {
             await xfs.symlinkPromise(depSrcPaths.packageLocation, depDstPath, `junction`);
           } else {
             await xfs.symlinkPromise(depLinkPath, depDstPath);
@@ -308,14 +309,14 @@ function getNodeModulesLocation(project: Project) {
 }
 
 function getStoreLocation(project: Project) {
-  return ppath.join(getNodeModulesLocation(project), `.store` as Filename);
+  return ppath.join(getNodeModulesLocation(project), `.store`);
 }
 
 function getPackagePaths(locator: Locator, {project}: {project: Project}) {
   const pkgKey = structUtils.slugifyLocator(locator);
   const storeLocation = getStoreLocation(project);
 
-  const packageLocation = ppath.join(storeLocation, pkgKey, `package` as Filename);
+  const packageLocation = ppath.join(storeLocation, pkgKey, `package`);
   const dependenciesLocation = ppath.join(storeLocation, pkgKey, Filename.nodeModules);
 
   return {packageLocation, dependenciesLocation};

@@ -1,4 +1,5 @@
 import type {BigIntStats, ReadStream, StatOptions, Stats, WriteStream, WriteVResult} from 'fs';
+import {createInterface}                                                             from 'readline';
 
 import type {CreateReadStreamOptions, CreateWriteStreamOptions, FakeFS}              from '../FakeFS';
 import type {Path}                                                                   from '../path';
@@ -96,9 +97,13 @@ export class FileHandle<P extends Path> {
     }
   }
 
-  // FIXME: Missing FakeFS version
-  chown(uid: number, gid: number): Promise<void> {
-    throw new Error(`Method not implemented.`);
+  async chown(uid: number, gid: number): Promise<void> {
+    try {
+      this[kRef](this.chown);
+      return await this[kBaseFs].fchownPromise(this.fd, uid, gid);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   async chmod(mode: number): Promise<void> {
@@ -206,6 +211,13 @@ export class FileHandle<P extends Path> {
     } finally {
       this[kUnref]();
     }
+  }
+
+  readLines(options?: CreateReadStreamOptions) {
+    return createInterface({
+      input: this.createReadStream(options),
+      crlfDelay: Infinity,
+    });
   }
 
   stat(

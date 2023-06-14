@@ -1,5 +1,7 @@
-import {Filename, PortablePath, ppath, xfs}  from '@yarnpkg/fslib';
-import {RequestType, startRegistryRecording} from 'pkg-tests-core/sources/utils/tests';
+import {Filename, ppath, xfs} from '@yarnpkg/fslib';
+import {tests}                from 'pkg-tests-core';
+
+const {RequestType, startRegistryRecording} = tests;
 
 export {};
 
@@ -186,7 +188,7 @@ describe(`Features`, () => {
 
       await run(`install`);
 
-      const cacheFolder = ppath.join(path, `.yarn/cache` as PortablePath);
+      const cacheFolder = ppath.join(path, `.yarn/cache`);
       const cacheListing = await xfs.readdirPromise(cacheFolder);
       const nativeFile = cacheListing.find(entry => entry.startsWith(`native-foo-x64-`));
 
@@ -211,7 +213,7 @@ describe(`Features`, () => {
 
       await run(`install`);
 
-      const cacheFolder = ppath.join(path, `.yarn/cache` as PortablePath);
+      const cacheFolder = ppath.join(path, `.yarn/cache`);
       const cacheListing = await xfs.readdirPromise(cacheFolder);
       const nativeFile = cacheListing.find(entry => entry.startsWith(`native-foo-x64-`));
 
@@ -240,7 +242,7 @@ describe(`Features`, () => {
 
       await run(`install`);
 
-      const cacheFolder = ppath.join(path, `.yarn/cache` as PortablePath);
+      const cacheFolder = ppath.join(path, `.yarn/cache`);
       const cacheListing = await xfs.readdirPromise(cacheFolder);
       const nativeFile = cacheListing.find(entry => entry.startsWith(`native-foo-x64-`));
 
